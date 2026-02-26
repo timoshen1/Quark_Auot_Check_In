@@ -88,30 +88,45 @@ jobs:
           echo "$date_str" > .last_success_date
           echo "已记录成功签到日期: $date_str"
 
-      - name: 推送签到成功到钉钉
-        if: success()
+      - name: 推送签到结果到钉钉
+        # 移除 if: success() 条件，使本步骤无论前面步骤成功或失败都运行
+        if: always()  # 这是关键修改，无论作业状态如何都执行此步骤
         run: |
-          # 构建钉钉机器人 Webhook URL
+          # 1. 构建正确的钉钉机器人 Webhook URL
           WEBHOOK_URL="https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.DINGTALK_ACCESS_TOKEN }}"
           
-          # 获取当前时间（北京时间）
+          # 2. 获取当前时间
           CURRENT_TIME=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
           
-          # 构造要发送的JSON数据，使用捕获的签到日志作为核心内容
+          # 3. 判断工作流状态，生成相应的状态提示
+          JOB_STATUS="${{ job.status }}"  # 可能的值是 'success' 或 'failure'
+          if [ "$JOB_STATUS" = "success" ]; then
+            STATUS_EMOJI="✅"
+            STATUS_TEXT="成功"
+          else
+            STATUS_EMOJI="❌"
+            STATUS_TEXT="失败或已中断"
+          fi
+          
+          # 4. 尝试获取签到脚本的输出日志，如果不存在则使用备用信息
+          # 注意：如果“执行签到脚本”步骤本身失败，其输出变量可能不存在
+          SCRIPT_LOG="${{ steps.run-signin-script.outputs.log || '（未获取到脚本输出日志）' }}"
+          
+          # 5. 构造要发送的JSON数据
           JSON_DATA=$(cat <<EOF
           {
             "msgtype": "text",
             "text": {
-              "content": "【Quark网盘签到日志】\n\n${{ steps.run-signin-script.outputs.log }}\n\n---\n⏰ 执行时间: ${CURRENT_TIME}\n📁 项目: ${{ github.repository }}\n🔗 详情: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              "content": "【Quark网盘签到结果】${STATUS_EMOJI}\n\n状态：${STATUS_TEXT}\n\n脚本输出：\n${SCRIPT_LOG}\n\n---\n⏰ 执行时间: ${CURRENT_TIME}\n📁 项目: ${{ github.repository }}\n🔗 详情: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
             }
           }
           EOF
           )
           
-          # 使用 curl 发送 POST 请求到钉钉
+          # 6. 使用 curl 发送 POST 请求到钉钉
           curl -s -H "Content-Type: application/json" -X POST -d "${JSON_DATA}" "${WEBHOOK_URL}"
           
-          echo "钉钉通知已发送。"
+          echo "钉钉通知已发送（最终状态：${STATUS_TEXT}）。"
           
       - name: 保存成功记录到缓存
         if: success()

@@ -72,14 +72,9 @@ jobs:
         run: pip install requests
 
       - name: 执行签到脚本
-        id: run-signin-script  # 添加id，以便后续引用此步骤的输出
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
-        run: |
-          # 运行脚本，并将标准输出和标准错误都捕获到变量 SIGNIN_LOG 中
-          SIGNIN_LOG=$(python checkIn_Quark.py 2>&1)
-          # 将捕获的日志内容设置为该步骤的输出变量，变量名为“log”
-          echo "log<<EOF"$'\n'"$SIGNIN_LOG"$'\n'"EOF" >> $GITHUB_OUTPUT
+        run: python checkIn_Quark.py
 
       - name: 标记今天签到成功
         if: success()
@@ -94,15 +89,17 @@ jobs:
           # 构建钉钉机器人 Webhook URL
           WEBHOOK_URL="https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.DINGTALK_ACCESS_TOKEN }}"
           
-          # 获取当前时间（北京时间）
+          # 获取当前时间（北京时间）和仓库名，用于构造消息
           CURRENT_TIME=$(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')
+          REPO_NAME="${{ github.repository }}"
           
-          # 构造要发送的JSON数据，使用捕获的签到日志作为核心内容
+          # 构造要发送的JSON数据
+          # 这里使用 text 类型消息，您也可以根据需要改为 link 或 markdown 类型
           JSON_DATA=$(cat <<EOF
           {
             "msgtype": "text",
             "text": {
-              "content": "【Quark网盘签到日志】\n\n${{ steps.run-signin-script.outputs.log }}\n\n---\n⏰ 执行时间: ${CURRENT_TIME}\n📁 项目: ${{ github.repository }}\n🔗 详情: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              "content": "GitHub Actions 签到成功通知\n\n项目：${REPO_NAME}\n任务：Quark网盘每日签到\n状态：✅ 签到成功\n时间：${CURRENT_TIME} (北京时间)\n\n[点击查看工作流运行记录](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
             }
           }
           EOF

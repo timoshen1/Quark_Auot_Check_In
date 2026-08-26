@@ -2,8 +2,8 @@ name: 夸克网盘每日签到
 
 on:
   schedule:
-    - cron: "0 1 * * *" # 北京时间 09:00
-    - cron: "0 5 * * *" # 北京时间 13:00，失败兜底
+    - cron: "0 1 * * *"
+    - cron: "0 5 * * *"
   workflow_dispatch:
 
 permissions:
@@ -63,6 +63,7 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
       - name: 执行签到脚本
+        id: sign
         if: steps.cache-success.outputs.cache-hit != 'true'
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
@@ -80,3 +81,16 @@ jobs:
         with:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
+
+      # ↓↓↓ 下面这段是新增的钉钉推送 ↓↓↓
+      - name: 推送签到结果到钉钉
+        if: always()
+        run: |
+          curl -s -X POST "https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.DINGTALK_ACCESS_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "msgtype": "text",
+              "text": {
+                "content": "【夸克签到】${{ job.status == 'success' && '✅成功' || '❌失败' }}\n\n🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }
+            }'

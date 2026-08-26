@@ -62,35 +62,48 @@ jobs:
         if: steps.cache-success.outputs.cache-hit != 'true'
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
+      # ★ 关键修改：加 continue-on-error，让脚本返回非0时不直接阻断 job
       - name: 执行签到脚本
         id: sign
         if: steps.cache-success.outputs.cache-hit != 'true'
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
         run: python checkIn_Quark.py
+        continue-on-error: true
 
+      # ★ 改为用 steps.sign.outcome 判断，只有真正全部成功才缓存
       - name: 生成今日成功标记
-        if: success() && steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.sign.outcome == 'success'
         run: |
           mkdir -p .cache/quark-signin
           echo "${{ steps.date.outputs.today }}" > .cache/quark-signin/success
 
       - name: 保存今日成功标记
-        if: success() && steps.cache-success.outputs.cache-hit != 'true'
+        if: steps.sign.outcome == 'success'
         uses: actions/cache/save@v6
         with:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
 
-      # ↓↓↓ 下面这段是新增的钉钉推送 ↓↓↓
+      # ★ 改进：钉钉推送区分缓存命中 / 全部成功 / 部分失败
       - name: 推送签到结果到钉钉
         if: always()
+        shell: bash
         run: |
+          if [ "${{ steps.cache-success.outputs.cache-hit }}" = "true" ]; then
+            STATUS="✅ 今日已签到（缓存命中）"
+          elif [ "${{ steps.sign.outcome }}" = "success" ]; then
+            STATUS="✅ 全部签到成功"
+          elif [ "${{ steps.sign.outcome }}" = "failure" ]; then
+            STATUS="⚠️ 签到出错（部分账号失败或 Cookie 异常）"
+          else
+            STATUS="❓ 未执行"
+          fi
           curl -s -X POST "https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.DINGTALK_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d '{
-              "msgtype": "text",
-              "text": {
-                "content": "【夸克签到】${{ job.status == 'success' && '✅成功' || '❌失败' }}\n\n🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            -d "{
+              \"msgtype\": \"text\",
+              \"text\": {
+                \"content\": \"【夸克签到】${STATUS}\n\n🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
               }
-            }'
+            }"

@@ -71,7 +71,20 @@ jobs:
         run: python checkIn_Quark.py
         continue-on-error: true
 
-      # ★ 改为用 steps.sign.outcome 判断，只有真正全部成功才缓存
+      # ★★★ 方案二：输出签到日志到 Job Summary（GitHub Actions 页面右侧 Summary 标签页可见）★★★
+      - name: 输出签到日志到 Job Summary
+        if: always()
+        shell: bash
+        env:
+          LOG: ${{ steps.sign.outputs.log }}
+        run: |
+          if [ -n "${LOG}" ]; then
+            echo "${LOG}" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "（无详细执行日志）" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      # ★ 生成今日成功标记
       - name: 生成今日成功标记
         if: steps.sign.outcome == 'success'
         run: |
@@ -85,10 +98,12 @@ jobs:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
 
-      # ★ 改进：钉钉推送区分缓存命中 / 全部成功 / 部分失败
+      # ★★★ 方案一：钉钉推送带上详细执行日志 ★★★
       - name: 推送签到结果到钉钉
         if: always()
         shell: bash
+        env:
+          LOG: ${{ steps.sign.outputs.log }}
         run: |
           if [ "${{ steps.cache-success.outputs.cache-hit }}" = "true" ]; then
             STATUS="✅ 今日已签到（缓存命中）"
@@ -99,11 +114,24 @@ jobs:
           else
             STATUS="❓ 未执行"
           fi
+
+          # 如果日志为空，给个默认提示
+          if [ -z "${LOG}" ]; then
+            LOG="（无详细执行日志）"
+          fi
+
+          # 用 jq 构造 JSON，安全处理换行和特殊字符，避免破坏 JSON 格式
+          jq -n \
+            --arg status "${STATUS}" \
+            --arg log "${LOG}" \
+            --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            '{
+              msgtype: "text",
+              text: {
+                content: "【夸克签到】\n\($status)\n\n\($log)\n\n🔗 \($url)"
+              }
+            }' > payload.json
+
           curl -s -X POST "https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.DINGTALK_ACCESS_TOKEN }}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"msgtype\": \"text\",
-              \"text\": {
-                \"content\": \"【夸克签到】${STATUS}\n\n🔗 ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
-              }
-            }"
+            -d @payload.json

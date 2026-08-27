@@ -62,26 +62,26 @@ jobs:
         if: steps.cache-success.outputs.cache-hit != 'true'
         run: python -m pip install --disable-pip-version-check -r requirements.txt
 
-      # ★ 关键修改：加 continue-on-error，让脚本返回非0时不直接阻断 job
+      # ★ 用 tee 同时输出到终端和日志文件，确保内容不丢失
       - name: 执行签到脚本
         id: sign
         if: steps.cache-success.outputs.cache-hit != 'true'
         env:
           COOKIE_QUARK: ${{ secrets.COOKIE_QUARK }}
-        run: python checkIn_Quark.py
+        run: python checkIn_Quark.py 2>&1 | tee /tmp/quark_sign.log
         continue-on-error: true
 
-      # ★★★ 方案二：输出签到日志到 Job Summary（GitHub Actions 页面右侧 Summary 标签页可见）★★★
+      # ★★★ 输出签到日志到 Job Summary（网页端可见）★★★
       - name: 输出签到日志到 Job Summary
         if: always()
         shell: bash
-        env:
-          LOG: ${{ steps.sign.outputs.log }}
         run: |
-          if [ -n "${LOG}" ]; then
-            echo "${LOG}" >> $GITHUB_STEP_SUMMARY
+          echo "### 🔍 夸克签到详细日志" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f /tmp/quark_sign.log ]; then
+            cat /tmp/quark_sign.log >> $GITHUB_STEP_SUMMARY
           else
-            echo "（无详细执行日志）" >> $GITHUB_STEP_SUMMARY
+            echo "（未找到日志文件）" >> $GITHUB_STEP_SUMMARY
           fi
 
       # ★ 生成今日成功标记
@@ -98,12 +98,10 @@ jobs:
           path: .cache/quark-signin
           key: quark-signed-${{ steps.date.outputs.today }}
 
-      # ★★★ 方案一：钉钉推送带上详细执行日志 ★★★
+      # ★★★ 钉钉推送带上详细执行日志 ★★★
       - name: 推送签到结果到钉钉
         if: always()
         shell: bash
-        env:
-          LOG: ${{ steps.sign.outputs.log }}
         run: |
           if [ "${{ steps.cache-success.outputs.cache-hit }}" = "true" ]; then
             STATUS="✅ 今日已签到（缓存命中）"
@@ -115,15 +113,17 @@ jobs:
             STATUS="❓ 未执行"
           fi
 
-          # 如果日志为空，给个默认提示
-          if [ -z "${LOG}" ]; then
-            LOG="（无详细执行日志）"
+          # 直接读取日志文件
+          if [ -f /tmp/quark_sign.log ]; then
+            LOG_CONTENT=$(cat /tmp/quark_sign.log)
+          else
+            LOG_CONTENT="（无详细执行日志）"
           fi
 
-          # 用 jq 构造 JSON，安全处理换行和特殊字符，避免破坏 JSON 格式
+          # 用 jq 构造 JSON，安全处理换行和特殊字符
           jq -n \
             --arg status "${STATUS}" \
-            --arg log "${LOG}" \
+            --arg log "${LOG_CONTENT}" \
             --arg url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             '{
               msgtype: "text",
